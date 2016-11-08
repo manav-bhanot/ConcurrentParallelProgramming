@@ -1,20 +1,15 @@
 /**
  * 
  */
-package edu.csulb.cecs570.ccp.tsp.sequentialbnb;
+package com.openmp.tsp;
 
 import java.io.File;
 import java.io.FileNotFoundException;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.PriorityQueue;
-import java.util.Random;
 import java.util.Scanner;
 import java.util.Set;
 
@@ -23,8 +18,6 @@ import java.util.Set;
  *
  */
 public class FindOptimalTour {
-	
-	private static Random random;
 	
 	// To check if the verbose mode is on or off
 	private boolean isVersboseModeOn = true;
@@ -65,18 +58,8 @@ public class FindOptimalTour {
 		
 		FindOptimalTour g = new FindOptimalTour();
 		
-		// Initialize the cities array size
-		/*g.cities = new ArrayList<String>();
-		// Add cities in the cities array.. starting from A
-		for (int b = 0; b < g.noOfCities; b++) {
-			g.cities.add((char) (b + 65) + "");
-		}*/
-		
-		// g.generateMatrix();
-		
 		// Reads the input from a file
 		g.readInputGraphFromFile();
-		
 		
 		g.startTime = System.currentTimeMillis();
 		System.out.println("Start time is : "+g.startTime);
@@ -124,24 +107,9 @@ public class FindOptimalTour {
 	}
 
 	private void readInputGraphFromFile() {
-		/*Scanner scan = new Scanner(System.in);
+		Scanner scan = new Scanner(System.in);
 		System.out.println("Enter the number of cities");
-		this.noOfCities = scan.nextInt();*/
-		
-		String graph = "tsp_graph_01.txt";
-		File file = null;
-		Scanner readGraph = null;
-		try {
-			URL url = getClass().getResource(graph);
-			file = new File(url.getPath());
-			readGraph = new Scanner(file);
-		} catch (FileNotFoundException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		}
-		String row = readGraph.nextLine();
-		
-		this.noOfCities = row.split(" ").length;
+		this.noOfCities = scan.nextInt();
 
 		// Initialize the cities array size
 		this.cities = new ArrayList<String>();
@@ -153,10 +121,10 @@ public class FindOptimalTour {
 		
 		this.adjacencyMatrix = new int[this.noOfCities][this.noOfCities];
 		
-		// boolean isValidPath = false;
+		boolean isValidPath = false;
+		String graph = "";
 		
-		
-		/*while (!isValidPath) {
+		while (!isValidPath) {
 			System.out.println("Enter the path to the input text file containing the graph represented as an adjacency matrix");
 			graph = scan.next().trim();
 			if (graph.contains(".txt")) {
@@ -164,14 +132,14 @@ public class FindOptimalTour {
 			} else {
 				System.out.println("Invalid path");
 			}
-		}*/
+		}
 
 		try {
-			readGraph = new Scanner(file);
+			Scanner readGraph = new Scanner(new File(graph));
 			int i=0;
 			int j=0;
 			while (readGraph.hasNextLine()) {
-				row = readGraph.nextLine();
+				String row = readGraph.nextLine();
 				String[] cols = row.split(" ");
 				
 				for (String col : cols) {
@@ -202,8 +170,8 @@ public class FindOptimalTour {
 			}
 		}*/
 		
-		// System.out.println("Do you want to switch the Verbose mode on (Type Y for yes and N for No) : ");
-		// isVersboseModeOn = scan.next().equalsIgnoreCase("y") ? true : false;
+		System.out.println("Do you want to switch the Verbose mode on (Type Y for yes and N for No) : ");
+		isVersboseModeOn = scan.next().equalsIgnoreCase("y") ? true : false;
 		
 	}
 
@@ -668,24 +636,6 @@ public class FindOptimalTour {
 			}
 		}
 		return firstMin + secondMin;
-	}
-	
-	private void generateMatrix() {		
-		random = new Random();
-		this.adjacencyMatrix = new int[this.noOfCities][this.noOfCities];
-		int min = 1;
-
-		for (int i = 0; i < this.noOfCities; i++) {
-			for (int j = i + 1; j < this.noOfCities; j++) {
-				this.adjacencyMatrix[i][j] = this.adjacencyMatrix[j][i] = random.nextInt(9) + min;
-			}
-		}
-		for (int i = 0; i < this.noOfCities; i++) {
-			for (int j = 0; j < this.noOfCities; j++) {
-				System.out.print(this.adjacencyMatrix[i][j] + " ");
-			}
-			System.out.println();
-		}
 	}
 
 	/**

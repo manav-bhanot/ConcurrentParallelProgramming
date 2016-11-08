@@ -7,7 +7,7 @@ public class GenerateGraph {
 	private static Random random;
 	private static int[][] graph;
 	
-	private static int n = 20;
+	private static int n = 15;
 
 	public static void main(String[] args) {
 		
@@ -17,7 +17,7 @@ public class GenerateGraph {
 		
 		for (int i=0; i < n; i++) {
 			for (int j = i+1; j < n; j++) {
-				graph[i][j] = graph[j][i] = random.nextInt(8) + min;				
+				graph[i][j] = graph[j][i] = random.nextInt(9) + min;				
 			}
 		}
 		for (int i=0; i < n; i++) {
