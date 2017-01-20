@@ -1,23 +1,40 @@
-/**
- * 
- */
 package com.openmp.tsp;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutput;
+import java.io.ObjectOutputStream;
+import java.io.Serializable;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.Random;
 import java.util.Scanner;
 import java.util.Set;
 
+import mpi.MPI;
+
 /**
  * @author Manav
+ * @author Gaurav
+ * 
+ * Finds the optimal tour of an input graph using the branch and bound technique.
+ * This algorithm uses MPJExpress which is an implementation of OpenMP framework to run the code on multiple processors/machines
+ * This code is tested on amazon AWS clusters having 5 machines installed in a cluster
  *
  */
+ 
 public class FindOptimalTour {
+	
+	private static Random random;
 	
 	// To check if the verbose mode is on or off
 	private boolean isVersboseModeOn = true;
@@ -41,6 +58,12 @@ public class FindOptimalTour {
 
 	// Stores the node that contains the route having the minimum cost
 	private Node minCostNode;
+	
+	// Keeps a count of the number of processors
+	private int noOfProcessors;
+	
+	// Keeps track of the rank of this processor
+	private int myRank;
 
 	// Keeps the nodes that are created during the process of finding an optimal route
 	// Priority is given to those nodes having the minimum of all the lower bounds
@@ -48,7 +71,9 @@ public class FindOptimalTour {
 	
 	private long startTime;
 	private long endTime;
-
+	
+	private Node[] nodeBuffer = new Node[1];
+	
 	
 	/**
 	 * Start the main program
@@ -58,373 +83,382 @@ public class FindOptimalTour {
 		
 		FindOptimalTour g = new FindOptimalTour();
 		
-		// Reads the input from a file
-		g.readInputGraphFromFile();
+		// Initialize the OpenMP framework
+		MPI.Init(args);
 		
-		g.startTime = System.currentTimeMillis();
-		System.out.println("Start time is : "+g.startTime);
+		g.myRank = MPI.COMM_WORLD.Rank();
+		g.noOfProcessors = MPI.COMM_WORLD.Size();
 		
-		// An edgeMatrix to keep track of the included and excluded edges
-		// This matrix is re-calculated for each node. Each node has its own
-		// instance of this matrix in order to
-		// efficiently track the inclusion/exclusion of edges at each node.
-		int[][] edgeMatrix = new int[g.noOfCities][g.noOfCities];
-		
-		// Initializing edge matrix to have -1 between those vertices for which no edge exists
-		for (int i=0; i<g.noOfCities; i++) {
-			for (int j=0; j<g.noOfCities; j++) {
-				if (g.adjacencyMatrix[i][j] == -1) edgeMatrix[i][j] = -1;
-			}
-		}
-
-		// Display the adjacency matrix
-		if (g.isVersboseModeOn) g.displayMatrix(g.adjacencyMatrix);		
-		
-		// Finding the lower bound at the root node
-		double cost = 0.0;
-		for (int v = 0; v < g.noOfCities; v++) {
-			cost += g.findSumOfTwoMinimumCostEdges(v, edgeMatrix);
-		}
-		
-		// Creating the root parent node that considers all the possible routes
-		NodeData value = new NodeData(edgeMatrix, cost/2);
-		Node root = new Node(value, null, null, null, false);
-
-		System.out.println("Estimated lower bound cost at root node is : " + root.value.lowerBound);
-
-		// Adding the root node to the queue
-		g.pQueue.add(root);
-
-		// Calling the findOptimalTour function which processes the pQueue and finds the optimal route out of all the available routes
-		g.findOptimalTour(0, 1);
-		
-		g.printOptimalTour(g.minCostNode);
-		
-		g.endTime = System.currentTimeMillis();
-		System.out.println("End time is : "+g.endTime);
-		
-		System.out.println("Total time taken is : " + (g.endTime - g.startTime));
-	}
-
-	private void readInputGraphFromFile() {
-		Scanner scan = new Scanner(System.in);
-		System.out.println("Enter the number of cities");
-		this.noOfCities = scan.nextInt();
-
-		// Initialize the cities array size
-		this.cities = new ArrayList<String>();
-		
-		// Add cities in the cities array.. starting from A
-		for (int b = 0; b < this.noOfCities; b++) {
-			this.cities.add((char)(b+65) + "");
-		}
-		
-		this.adjacencyMatrix = new int[this.noOfCities][this.noOfCities];
-		
-		boolean isValidPath = false;
-		String graph = "";
-		
-		while (!isValidPath) {
-			System.out.println("Enter the path to the input text file containing the graph represented as an adjacency matrix");
-			graph = scan.next().trim();
-			if (graph.contains(".txt")) {
-				isValidPath = true;
-			} else {
-				System.out.println("Invalid path");
-			}
-		}
-
-		try {
-			Scanner readGraph = new Scanner(new File(graph));
-			int i=0;
-			int j=0;
-			while (readGraph.hasNextLine()) {
-				String row = readGraph.nextLine();
-				String[] cols = row.split(" ");
-				
-				for (String col : cols) {
-					int cost = Integer.parseInt(col.trim());
-					this.adjacencyMatrix[i][j] = cost;
-					j++;
-				}
-				//i = (i+1) % (this.cities.size()-1);
-				i++;
-				j = 0;
+		// Process 0 is the master process
+		// It generates till the number of nodes in the priority queue is equal to the number of processes available to process them
+		if (g.myRank == 0) {
+			
+			// Reads the input from a file
+			g.readInputGraphFromFile();
+			
+			g.startTime = System.currentTimeMillis();
+			System.out.println("Start time is : "+g.startTime);
+			
+			// An edgeMatrix to keep track of the included and excluded edges
+			// This matrix is re-calculated for each node. Each node has its own
+			// instance of this matrix in order to
+			// efficiently track the inclusion/exclusion of edges at each node.
+			int[][] edgeMatrix = new int[g.noOfCities][g.noOfCities];
+			
+			// Display the adjacency matrix
+			if (g.isVersboseModeOn) g.displayMatrix(g.adjacencyMatrix);		
+			
+			// Finding the lower bound at the root node
+			double cost = 0.0;
+			for (int v = 0; v < g.noOfCities; v++) {
+				cost += g.findSumOfTwoMinimumCostEdges(v, edgeMatrix);
 			}
 			
-		} catch (FileNotFoundException e) {
-			e.printStackTrace();
-		}	
-		
-		for (String name : this.cities) {
-			this.longestCityName = Math.max(this.longestCityName, name.length());
-		}
+			// Creating the root node that considers all the possible routes
+			NodeData value = new NodeData(edgeMatrix, cost/2);
+			Node root = new Node(value, null, null, null, false);
 
-		/*for (int i = 0; i < this.noOfCities; i++) {
-			for (int j = i + 1; j < this.noOfCities; j++) {
-				System.out.println("Enter the distance between " + cities.get(i) + " and " + cities.get(j)
-						+ ". Enter -1 if there is no edge between them");
-				int dist = scan.nextInt();
-				adjacencyMatrix[i][j] = dist;
-				adjacencyMatrix[j][i] = dist;
+			System.out.println("Estimated lower bound cost at root node is : " + root.value.lowerBound);
+
+			// Adding the root node to the queue
+			g.pQueue.add(root);
+			
+			// Generates the child nodes and puts them in the Priority Queue until the size of the queue is equal to the number of processes
+			while (g.pQueue.size() < g.noOfProcessors - 1) {
+				g.findOptimalTour();
 			}
-		}*/
-		
-		System.out.println("Do you want to switch the Verbose mode on (Type Y for yes and N for No) : ");
-		isVersboseModeOn = scan.next().equalsIgnoreCase("y") ? true : false;
-		
-	}
-
-	/**
-	 * Prints the minimum cost route on the console along with its cost
-	 * @param minCostNode2
-	 */
-	private void printOptimalTour(Node node) {
-		System.out.println("\n\nThe optimal path will include the below edges of the graph");
-		List<String> edgesInvolvedInOptimalTour = new ArrayList<String>();
-		int k=0;
-		for (int i=0; i < node.value.edgeMatrix[0].length; i++) {
-			for (int j=i+1; j < node.value.edgeMatrix[i].length; j++) {
-				if (node.value.edgeMatrix[i][j] == 1) {
-					edgesInvolvedInOptimalTour.add(this.cities.get(i) + this.cities.get(j));
-					System.out.print(" "+this.cities.get(i) + this.cities.get(j));
+			
+			// Process 0 has generated nodes = number of slave processes available
+			// Now send these nodes one by one to the processes
+			
+			for (int i=1; i < g.noOfProcessors; i++) {
+				
+				Node n = g.pQueue.poll();
+				
+				try {
+					// Converting the node to byte array
+					ByteArrayOutputStream bos = new ByteArrayOutputStream();
+					ObjectOutput out = new ObjectOutputStream(bos);
+					out.writeObject(n);
+					byte[] nodeBytes = bos.toByteArray();
+					
+					// Converting the adjacency matrix to byte array
+					bos = new ByteArrayOutputStream();
+					out = new ObjectOutputStream(bos);
+					out.writeObject(g.adjacencyMatrix);
+					byte[] adjacencyMatrixBytes = bos.toByteArray();
+					
+					// MPI send the adjacency matrix to each of the slave processors
+					MPI.COMM_WORLD.Isend(adjacencyMatrixBytes, 0, adjacencyMatrixBytes.length, MPI.BYTE, i, i);
+					
+					// MPI send command to send the node n to process i
+					MPI.COMM_WORLD.Isend(nodeBytes, 0, nodeBytes.length, MPI.BYTE, i, i);
+					
+				} catch (IOException ex) {
+					ex.printStackTrace();
 				}
 			}
+			
+			System.out.println("Master process has send the nodes in the queue to all the processors");
+			
+			// Master should now wait until all the slaves have finished processing and return their respective results to the master
+			for (int i=1; i < g.noOfProcessors; i++) {
+				Node minCostNodeReceived = null;
+				byte minCostNodes[] = new byte[5000];
+				
+				MPI.COMM_WORLD.Recv(minCostNodes, 0, 5000, MPI.BYTE, i, i);
+				
+				ByteArrayInputStream bis = new ByteArrayInputStream(minCostNodes);
+				ObjectInput in = null;
+				try {
+					in = new ObjectInputStream(bis);
+					Object obj = in.readObject();
+					minCostNodeReceived = (Node) obj;
+					
+					if (g.minimumCost > minCostNodeReceived.value.lowerBound) {
+						g.minimumCost = (int) minCostNodeReceived.value.lowerBound;
+						g.minCostNode = minCostNodeReceived;
+					}
+					
+				} catch (IOException ex) {
+					ex.printStackTrace();
+				} catch (ClassNotFoundException cnf) {
+					cnf.printStackTrace();
+				}				
+			}
+					
+			g.printOptimalTour(g.minCostNode);
+			
+			g.endTime = System.currentTimeMillis();
+			System.out.println("End time is : "+g.endTime);
+			
+			System.out.println("Total time taken is : " + (g.endTime - g.startTime));
+		} else {
+			
+			// Other processors tend to keep listening to the parent processor if it sends any new node
+			// Upon receiving the node, they will calculate the lower bound of the node. 
+			// Once the lower bound of the node is calculated, they must check that if the lower bound of the new node is greater than the min cost found
+			// If yes, this node must not be sent back to the parent process for addition to PQ
+			// If not, then send this to parent process so that it can be added to PQ
+			
+			// PriorityQueue<Node> pQueue = new PriorityQueue<Node>();
+			
+			byte[] nodeBytes = new byte[5000];
+			byte[] adjacencyMatrixBytes = new byte[5000];
+			Node nodeReceived = null;
+			
+			// Each process should receive a node from the parent process
+			// After receiving the node, it casts the buffer contents back to a Node class
+			// It then adds the node to its own local Priority Queue
+			// Then it starts processing the node i.e. finding the subtree rooted at this node.
+			for (int i=1; i < g.noOfProcessors; i++) {
+				if (g.myRank == i) {
+					
+					//System.out.println("Before Receive : "+g.myRank);
+					
+					// Receives the adjacency matrix from the parent process
+					MPI.COMM_WORLD.Recv(adjacencyMatrixBytes, 0, 5000, MPI.BYTE, 0, i);
+					
+					// Receives the node from the parent processor
+					MPI.COMM_WORLD.Recv(nodeBytes, 0, 5000, MPI.BYTE, 0, i);
+					
+					//System.out.println("After Receive : "+g.myRank);
+					
+					ByteArrayInputStream bis1 = new ByteArrayInputStream(adjacencyMatrixBytes);
+					ObjectInput in1 = null;
+					try {
+						in1 = new ObjectInputStream(bis1);
+						Object obj = in1.readObject();
+						g.adjacencyMatrix = (int[][]) obj;
+					} catch (IOException ex) {
+						ex.printStackTrace();
+					} catch (ClassNotFoundException cnf) {
+						cnf.printStackTrace();
+					}
+					
+					ByteArrayInputStream bis2 = new ByteArrayInputStream(nodeBytes);
+					ObjectInput in2 = null;
+					try {
+						in2 = new ObjectInputStream(bis2);
+						Object obj = in2.readObject();
+						nodeReceived = (Node) obj;
+					} catch (IOException ex) {
+						ex.printStackTrace();
+					} catch (ClassNotFoundException cnf) {
+						cnf.printStackTrace();
+					}
+					
+					g.noOfCities = nodeReceived.value.edgeMatrix[0].length;
+					// Initialize the cities array size
+					g.cities = new ArrayList<String>();
+					
+					// Add cities in the cities array.. starting from A
+					for (int b = 0; b < g.noOfCities; b++) {
+						g.cities.add((char)(b+65) + "");
+					}
+					g.pQueue.add(nodeReceived);
+				}
+			}
+			
+			
+			// By now the node has been received, so this process will start processing the node
+			// The process will calculate the subtree rooted at this node and then return the minimum cost of the route found in this branch of
+			// the main tree
+			
+			while (!g.pQueue.isEmpty()) {
+				g.findOptimalTour();
+			}			
+			try {
+				ByteArrayOutputStream bos = new ByteArrayOutputStream();
+				ObjectOutput out = null;
+				out = new ObjectOutputStream(bos);
+				out.writeObject(g.minCostNode);
+				byte[] minCostNodeBytes = bos.toByteArray();
+				
+				// MPI send command to send the node n to process i
+				System.out.println("Process with rank " + g.myRank + " sending data to parent process");
+				MPI.COMM_WORLD.Send(minCostNodeBytes, 0, minCostNodeBytes.length, MPI.BYTE, 0, g.myRank);
+				
+			} catch (IOException ex) {
+				ex.printStackTrace();
+			}
 		}
-		System.out.println("\nOptimal Route Cost is : "+node.value.lowerBound);
+		MPI.COMM_WORLD.Barrier();
+		MPI.Finalize();
+	}
+	
+	private void generateMatrix() {		
+		random = new Random();
+		this.adjacencyMatrix = new int[this.noOfCities][this.noOfCities];
+		int min = 1;
+
+		for (int i = 0; i < this.noOfCities; i++) {
+			for (int j = i + 1; j < this.noOfCities; j++) {
+				this.adjacencyMatrix[i][j] = this.adjacencyMatrix[j][i] = random.nextInt(9) + min;
+			}
+		}
+		for (int i = 0; i < this.noOfCities; i++) {
+			for (int j = 0; j < this.noOfCities; j++) {
+				System.out.print(this.adjacencyMatrix[i][j] + " ");
+			}
+			System.out.println();
+		}
 	}
 
 	/**
-	 * // check the cost of its sibling
-		// if cost of its sibling is less than its own cost then continue and do
-		// not expand the tree
-
-		// check the number of incident edges considered till now
-		// i represents the node index which should be checked for the incident
-		// edges
-		// if the number of incident edges = 2 then do not expand this node
-		// further
-		// set isLeafNode = true
-
-		// if no edges have been considered till now incident to i, and if there
-		// are only 2 edges left to be considered,
-		// and the cost computed is less than its sibling, then
-		// increment i, i.e. consider the next city now and repeat the same
-		// process
+	 * 
 	 * @param i
 	 * @param j
+	 * @throws InterruptedException 
 	 */
-	private void findOptimalTour(int i, int j) {		
-		
-		// Checks if the queue still has some nodes to be processed
-		while (!this.pQueue.isEmpty()) {
-			
-			// Remove the top element from the queue
-			Node node = this.pQueue.remove();
-			printNodeInfo(node);
-			
-			if (this.isRouteFound && node.value.lowerBound > minimumCost) {
-				System.out.println("\nNode with lower bound "+node.value.lowerBound+" is pruned");
-				continue;
-			}
-			
-			if (i > this.noOfCities - 1 || j > this.noOfCities - 1) continue;
-			
-			// if there is no edge between these two vertices, then proceed to
-			// next vertex
-			if (this.adjacencyMatrix[i][j] == -1) {
-				j++;
-				continue;
-			}
-			
-			// Keeping track of vertices whose edges are implicitly included/excluded due to the inclusion/exclusion of edge of other vertices
-			Set<Integer> verticesToReprocess = new HashSet<Integer>();
-			
-			// Check if the left child of this node is null. If it is then create the left child
-			if (node.left == null) {
-				
-				// Create the new edge matrix for the left child
-				int[][] edgeMatrix = new int[this.noOfCities][this.noOfCities];
-				
-				// Copies the edge matrix from the current node to the left child node
-				for (int loop = 0; loop < this.noOfCities; loop++) {
-					edgeMatrix[loop] = Arrays.copyOf(node.value.edgeMatrix[loop], this.noOfCities);
-				}
+	private void findOptimalTour() {
 
-				// Considering the edge i,j and updating the state of the edge matrix
-				edgeMatrix[i][j] = edgeMatrix[j][i] = 1;
-				updateEdgeMatrix(edgeMatrix, verticesToReprocess);
+		/**********************
+		 * START of SEQUENTIAL CODE
+		 *************************/
 
-				// Updating the edge matrix for the edges present in the verticesToReprocess set
-				for (int v : verticesToReprocess) {
-					updateEdgeMatrix(edgeMatrix, v);
-				}
+		// Gets the i,j vertices whose edge is to be processed in the next
+		// iteration
+		int i = 0;
+		int j = 0;
+		boolean check = false;
+		Node topNodeInPQueue = this.pQueue.peek();
 
-				// Clearing the set as all the vertices are now reprocessed
-				verticesToReprocess.clear();
+		// System.out.println("Process " + this.myRank + " is going to print its
+		// edge matrix");
+		// this.displayMatrix(topNodeInPQueue.value.edgeMatrix);
 
-				// Check if the route is found at this node
-				boolean routeFound = isRouteFound(edgeMatrix);
-
-				double routeCost = 0;
-
-				// Update the minimum cost if route is found else find the lower bound and update it in the node
-				if (routeFound) {
-					routeCost = findRouteCost(edgeMatrix);
-				} else {
-					for (int v = 0; v < this.noOfCities; v++) {
-						routeCost += this.findSumOfTwoMinimumCostEdges(v, edgeMatrix);
-					}
-					routeCost = routeCost / 2.0;
-				}
-				NodeData value = new NodeData(edgeMatrix, routeCost);
-				node.left = new Node(value, null, null, null, routeFound);
-
-				// Prints all the edges considered and not considered for calculation of the lower bound on this node
-				if (isVersboseModeOn) {
-					System.out.println("\n");
-					System.out.println("Computed the left node");
-					printEdgesConsideredForThisNode(edgeMatrix);
-					displayMatrix(edgeMatrix);
-					if (routeFound) System.out.println("Cost of the route found : "+routeCost);
-					else System.out.println("Lower bound of this node : "+routeCost);
-				}
-
-				// If a route is found with the minimum cost, update the minimum cost and store this node
-				if (routeFound && routeCost < minimumCost) {
-					this.minimumCost = (int) routeCost;
-					minCostNode = node.left;
-					this.isRouteFound = routeFound;
-				} else {					
-					// Adds this node in the queue since no route is found till now and so this node is a potential candidate for 
-					// future processing.
-					this.pQueue.add(node.left);
-				}
-			}
-			
-			// Check if the right child of this node is null. If yes, then create the right child
-			if (node.right == null) {
-				// Create the new edge matrix for the left child
-				int[][] edgeMatrix = new int[this.noOfCities][this.noOfCities];
-				
-				// Copies the edge matrix from the current node to the left child node
-				for (int loop = 0; loop < this.noOfCities; loop++) {
-					edgeMatrix[loop] = Arrays.copyOf(node.value.edgeMatrix[loop], this.noOfCities);
-				}
-
-				// Considering the edge i,j and updating the state of the edge matrix
-				edgeMatrix[i][j] = edgeMatrix[j][i] = -1;
-				updateEdgeMatrix(edgeMatrix, verticesToReprocess);
-
-				// Updating the edge matrix for the edges present in the verticesToReprocess set
-				for (int v : verticesToReprocess) {
-					updateEdgeMatrix(edgeMatrix, v);
-				}
-
-				// Clearing the set as all the vertices are now reprocessed
-				verticesToReprocess.clear();
-
-				// Check if the route is found at this node
-				boolean routeFound = isRouteFound(edgeMatrix);
-
-				double routeCost = 0;
-
-				// Update the minimum cost if route is found else find the lower bound and update it in the node
-				if (routeFound) {
-					routeCost = findRouteCost(edgeMatrix);
-				} else {
-					for (int v = 0; v < this.noOfCities; v++) {
-						routeCost += this.findSumOfTwoMinimumCostEdges(v, edgeMatrix);
-					}
-					routeCost = routeCost / 2.0;
-				}
-				NodeData value = new NodeData(edgeMatrix, routeCost);
-				node.right = new Node(value, null, null, null, routeFound);
-
-				// Prints all the edges considered and not considered for calculation of the lower bound on this node
-				if (isVersboseModeOn) {
-					System.out.println("\n");
-					System.out.println("Computed the right node");
-					printEdgesConsideredForThisNode(edgeMatrix);
-					displayMatrix(edgeMatrix);
-					if (routeFound) System.out.println("Cost of the route found : "+routeCost);
-					else System.out.println("Lower bound of this node : "+routeCost);
-				}
-
-				// If a route is found with the minimum cost, update the minimum cost and store this node
-				if (routeFound && routeCost < minimumCost) {
-					this.minimumCost = (int) routeCost;
-					minCostNode = node.right;
-					this.isRouteFound = routeFound;
-				} else {					
-					// Adds this node in the queue since no route is found till now and so this node is a potential candidate for 
-					// future processing.
-					this.pQueue.add(node.right);
-				}
-			}
-			
-			// Checks if all the edges incident with vertex i has been processed
-			
-			
-			/*if (!isVertexFullyProcessed(pQueue.peek().value.edgeMatrix, i)) {
+		for (int v = 0; v < this.noOfCities; v++) {
+			if (!isVertexFullyProcessed(topNodeInPQueue.value.edgeMatrix, v)) {
+				i = v;
 				for (int col = i + 1; col < this.noOfCities; col++) {
-					if (pQueue.peek().value.edgeMatrix[i][col] == 0) {
+					if (topNodeInPQueue.value.edgeMatrix[i][col] == 0) {
 						j = col;
+						check = true;
 						break;
 					}
 				}
-			} else {
-				
-			}*/
-			
-			boolean check = false;
-			Node topNodeInPQueue = this.pQueue.peek();
-			for (int v=0; v < this.noOfCities; v++) {
-				if (!isVertexFullyProcessed(topNodeInPQueue.value.edgeMatrix, v)) {
-					i = v;
-					for (int col = i+1; col < this.noOfCities; col++) {
-						if (topNodeInPQueue.value.edgeMatrix[i][col] == 0) {
-							j = col;
-							check = true;
-							break;
-						}
-					}
-				}
-				if (check) break;
-			}			
-		}
-	}
-
-	private void printNodeInfo(Node node) {
-		System.out.println("\nBelow node is now popped from the pQueue");
-		displayMatrix(node.value.edgeMatrix);
-		printEdgesConsideredForThisNode(node.value.edgeMatrix);
-		System.out.println("Lower bound of this node is : "+node.value.lowerBound);
-		System.out.println("Does this node has a left child? : "+(node.left != null));
-		System.out.println("Does this node has a right child? : "+(node.right != null));
-		System.out.println();
-	}
-
-	/**
-	 * Prints all the edges that are considered along with the ones that are not considered for calculation of lower bound on this node
-	 * @param edgeMatrix
-	 */
-	private void printEdgesConsideredForThisNode(int[][] edgeMatrix) {
-		StringBuilder edgesConsidered = new StringBuilder();
-		StringBuilder edgesNotConsidered = new StringBuilder();
-		for (int i = 0; i < this.noOfCities; i++) {
-			for (int j = i; j < this.noOfCities; j++) {
-				if (edgeMatrix[i][j] == 1) {
-					edgesConsidered.append(" (" + this.cities.get(i) + "-" + this.cities.get(j) + ")");
-				} else if (edgeMatrix[i][j] == -1) {
-					edgesNotConsidered.append(" (" + this.cities.get(i) + "-" + this.cities.get(j) + ")");
-				}
 			}
+			if (check)
+				break;
 		}
-		System.out.println("Edges considered :" + edgesConsidered.toString());
-		System.out.println("Edges Not considered :" + edgesNotConsidered.toString());
-	}
 
+		Node node = this.pQueue.remove();
+
+		// Prints the node info which includes the edgeMatrix showing edges
+		// included and excluded on calculation of the lower bound
+		// of this node
+		// printNodeInfo(node);
+
+		if (this.isRouteFound && node.value.lowerBound > minimumCost) {
+			System.out.println("\nNode with lower bound " + node.value.lowerBound + " is pruned");
+			return;
+		}
+		// Check if the left child of this node is null. If it is then create
+		// the left child
+		if (node.left == null) {
+			generateChildNode(node, i, j, true);
+		}
+
+		// Check if the right child of this node is null. If yes, then create
+		// the right child
+		if (node.right == null) {
+			generateChildNode(node, i, j, false);
+		}
+		// }
+
+		/**********************
+		 * END of SEQUENTIAL CODE
+		 *************************/
+	}
+	
+	private void generateChildNode(Node parentNode, int i, int j, boolean isEdgeIncluded) {
+		// Create the new edge matrix for the left child
+		int[][] edgeMatrix = new int[this.noOfCities][this.noOfCities];		
+
+		// Keeping track of vertices whose edges are implicitly included/excluded due to the inclusion/exclusion of edge of other vertices
+		Set<Integer> verticesToReprocess = new HashSet<Integer>();
+		
+		// Copies the edge matrix from the current node to the left child node
+		for (int loop = 0; loop < this.noOfCities; loop++) {
+			edgeMatrix[loop] = Arrays.copyOf(parentNode.value.edgeMatrix[loop], this.noOfCities);
+		}
+		
+		System.out.println("i = " + i);
+		System.out.println("j = " + j);
+
+		// Considering the edge i,j and updating the state of the edge matrix
+		if (isEdgeIncluded) edgeMatrix[i][j] = edgeMatrix[j][i] = 1;
+		else edgeMatrix[i][j] = edgeMatrix[j][i] = -1;
+		
+		boolean shouldBePruned =  updateEdgeMatrix(edgeMatrix, verticesToReprocess);
+		
+		System.out.println("ShoudBePruned : " + shouldBePruned);
+		if (shouldBePruned) return;
+
+		// Updating the edge matrix for the edges present in the verticesToReprocess set
+		for (int v : verticesToReprocess) {
+			updateEdgeMatrix(edgeMatrix, v);
+		}
+
+		// Clearing the set as all the vertices are now reprocessed
+		verticesToReprocess.clear();
+
+		// Check if the route is found at this node
+		boolean routeFound = isRouteFound(edgeMatrix);
+
+		double routeCost = 0;
+
+		// Update the minimum cost if route is found else find the lower bound and update it in the node
+		if (routeFound) {
+			routeCost = findRouteCost(edgeMatrix);
+		} else {
+			for (int v = 0; v < this.noOfCities; v++) {
+				routeCost += this.findSumOfTwoMinimumCostEdges(v, edgeMatrix);
+			}
+			routeCost = routeCost / 2.0;
+		}
+		NodeData value = new NodeData(edgeMatrix, routeCost);
+		Node node = new Node(value, null, null, null, routeFound);
+		
+		// Appends this node to the left or right of the parent node depending on whether an edge was considered or not
+		if (isEdgeIncluded) parentNode.left = node;
+		else parentNode.right = node;
+
+		// Prints all the edges considered and not considered for calculation of the lower bound on this node
+		if (isVersboseModeOn) {
+			System.out.println("\n");
+			System.out.println("Computing the "+ (isEdgeIncluded ? "left" : "right") + " node");
+			printEdgesConsideredForThisNode(edgeMatrix);
+			displayMatrix(edgeMatrix);
+			if (routeFound) System.out.println("Cost of the route found : "+routeCost);
+			else System.out.println("Lower bound of this node : "+routeCost);
+		}
+
+		// If a route is found with the minimum cost, update the minimum cost and store this node
+		
+		if (routeFound && routeCost < this.minimumCost) {
+			this.minimumCost = (int) routeCost;
+			this.minCostNode = node;
+			this.isRouteFound = routeFound;
+			
+			// Broadcast the minimum cost found till now to all the processing nodes
+			/*for (int rank=1; rank < this.noOfProcessors; rank++) {
+				if (rank == this.myRank) {
+					continue;
+				}
+				MPI.COMM_WORLD.Isend(new int[]{this.minimumCost}, 0, 1, MPI.INT, rank, 0);
+			}	*/	
+		} else if (routeCost < minimumCost) {
+			// Adds this node in the queue since no route is found till now and
+			// so this node is a potential candidate for
+			// future processing.
+			// However, this node should only be added if it has a lower bound <
+			// cost of the mincost route found till now
+			this.pQueue.add(node);
+		}
+	}
+	
 	/**
 	 * Checks if this vertex has been fully processed
 	 * A vertex is fully processed if we have considered all the possibilities of finding a route passing through that vertex
@@ -511,11 +545,13 @@ public class FindOptimalTour {
 	 * Updates the state of all the edges incident with all the vertices in the graph.
 	 * edgeMatrix[i,j] == -1 => this edge is not considered in the tour
 	 * edgeMatrix[i,j] == 1 => this edge must be considered in the final tour
+	 * Also takes care of the implicit exclusion inclusion of edges as a result of inclusion and exclusion of edge 
+	 * under consideration
 	 * 
 	 * @param edgeMatrix
 	 * @param s
 	 */
-	private void updateEdgeMatrix(int[][] edgeMatrix, Set<Integer> s) {
+	private boolean updateEdgeMatrix(int[][] edgeMatrix, Set<Integer> s) {
 
 		for (int i = 0; i < this.noOfCities; i++) {
 			// Tracks the total number of edges that should be incident with
@@ -532,6 +568,11 @@ public class FindOptimalTour {
 					remainingEdges++;
 				}
 			}
+			
+			if (edgesConsidered > 2 || (edgesConsidered + remainingEdges) < 2) {
+				return true;
+			}
+			
 			if (edgesConsidered < 2) {
 				if ((remainingEdges == 2 && edgesConsidered == 0) || (remainingEdges == 1 && edgesConsidered == 1)) {
 					for (int j = 0; j < this.noOfCities; j++) {
@@ -552,6 +593,7 @@ public class FindOptimalTour {
 				}
 			}
 		}
+		return false;
 	}
 
 	/**
@@ -637,13 +679,33 @@ public class FindOptimalTour {
 		}
 		return firstMin + secondMin;
 	}
+	
+	/**
+	 * Prints all the edges that are considered along with the ones that are not considered for calculation of lower bound on this node
+	 * @param edgeMatrix
+	 */
+	private void printEdgesConsideredForThisNode(int[][] edgeMatrix) {
+		StringBuilder edgesConsidered = new StringBuilder();
+		StringBuilder edgesNotConsidered = new StringBuilder();
+		for (int i = 0; i < this.noOfCities; i++) {
+			for (int j = i; j < this.noOfCities; j++) {
+				if (edgeMatrix[i][j] == 1) {
+					edgesConsidered.append(" (" + this.cities.get(i) + "-" + this.cities.get(j) + ")");
+				} else if (edgeMatrix[i][j] == -1) {
+					edgesNotConsidered.append(" (" + this.cities.get(i) + "-" + this.cities.get(j) + ")");
+				}
+			}
+		}
+		System.out.println("Edges considered :" + edgesConsidered.toString());
+		System.out.println("Edges Not considered :" + edgesNotConsidered.toString());
+	}
 
 	/**
 	 * Displays the adjacency matrix representing the graph
 	 */
 	private void displayMatrix(int[][] matrix) {
 		
-		System.out.println("Printing the adjacency matrix representing the graph.\n");
+		System.out.println("Printing the edge matrix representing the graph.\n");
 		
 		printSpaces(this.longestCityName + 2);
 		for (int i = 0; i < this.cities.size(); i++) {
@@ -665,6 +727,121 @@ public class FindOptimalTour {
 		System.out.println("\n");
 
 	}
+	
+	@SuppressWarnings("unused")
+	private void printNodeInfo(Node node) {
+		System.out.println("\nBelow node is now popped from the pQueue");
+		displayMatrix(node.value.edgeMatrix);
+		printEdgesConsideredForThisNode(node.value.edgeMatrix);
+		System.out.println("Lower bound of this node is : "+node.value.lowerBound);
+		System.out.println("Does this node has a left child? : "+(node.left != null));
+		System.out.println("Does this node has a right child? : "+(node.right != null));
+		System.out.println();
+	}
+	
+	/**
+	 * Prints the minimum cost route on the console along with its cost
+	 * @param minCostNode2
+	 */
+	private void printOptimalTour(Node node) {
+		System.out.println("\n\nThe optimal path will include the below edges of the graph");
+		List<String> edgesInvolvedInOptimalTour = new ArrayList<String>();
+		for (int i=0; i < node.value.edgeMatrix[0].length; i++) {
+			for (int j=i+1; j < node.value.edgeMatrix[i].length; j++) {
+				if (node.value.edgeMatrix[i][j] == 1) {
+					edgesInvolvedInOptimalTour.add(this.cities.get(i) + this.cities.get(j));
+					System.out.print(" "+this.cities.get(i) + this.cities.get(j));
+				}
+			}
+		}
+		displayMatrix(node.value.edgeMatrix);
+		System.out.println("\nOptimal Route Cost is : "+node.value.lowerBound);
+	}
+	
+	@SuppressWarnings("resource")
+	private void readInputGraphFromFile() {
+		/*Scanner scan = new Scanner(System.in);
+		System.out.println("Enter the number of cities");
+		this.noOfCities = scan.nextInt();*/
+		
+		String graph = "tsp_graph_06.txt";
+		File file = null;
+		Scanner readGraph = null;
+		try {
+			URL url = getClass().getResource(graph);
+			file = new File(url.getPath());
+			readGraph = new Scanner(file);
+		} catch (FileNotFoundException e1) {
+			// TODO Auto-generated catch block
+			e1.printStackTrace();
+		}
+		String row = readGraph.nextLine();
+		
+		this.noOfCities = row.split(" ").length;
+
+		// Initialize the cities array size
+		this.cities = new ArrayList<String>();
+		
+		// Add cities in the cities array.. starting from A
+		for (int b = 0; b < this.noOfCities; b++) {
+			this.cities.add((char)(b+65) + "");
+		}
+		
+		this.adjacencyMatrix = new int[this.noOfCities][this.noOfCities];
+		
+		// boolean isValidPath = false;
+		
+		
+		/*while (!isValidPath) {
+			System.out.println("Enter the path to the input text file containing the graph represented as an adjacency matrix");
+			graph = scan.next().trim();
+			if (graph.contains(".txt")) {
+				isValidPath = true;
+			} else {
+				System.out.println("Invalid path");
+			}
+		}*/
+
+		try {
+			readGraph = new Scanner(file);
+			int i=0;
+			int j=0;
+			while (readGraph.hasNextLine()) {
+				row = readGraph.nextLine();
+				String[] cols = row.split(" ");
+				
+				for (String col : cols) {
+					int cost = Integer.parseInt(col.trim());
+					this.adjacencyMatrix[i][j] = cost;
+					j++;
+				}
+				//i = (i+1) % (this.cities.size()-1);
+				i++;
+				j = 0;
+			}
+			
+		} catch (FileNotFoundException e) {
+			e.printStackTrace();
+		}	
+		
+		for (String name : this.cities) {
+			this.longestCityName = Math.max(this.longestCityName, name.length());
+		}
+
+		/*for (int i = 0; i < this.noOfCities; i++) {
+			for (int j = i + 1; j < this.noOfCities; j++) {
+				System.out.println("Enter the distance between " + cities.get(i) + " and " + cities.get(j)
+						+ ". Enter -1 if there is no edge between them");
+				int dist = scan.nextInt();
+				adjacencyMatrix[i][j] = dist;
+				adjacencyMatrix[j][i] = dist;
+			}
+		}*/
+		
+		// System.out.println("Do you want to switch the Verbose mode on (Type Y for yes and N for No) : ");
+		// isVersboseModeOn = scan.next().equalsIgnoreCase("y") ? true : false;
+		
+	}
 
 	private void printSpaces(int s) {
 		for (int i = 0; i < s; i++) {
@@ -678,7 +855,7 @@ public class FindOptimalTour {
  * @author Manav
  *
  */
-class NodeData {
+class NodeData implements Serializable {
 	int[][] edgeMatrix;
 	double lowerBound;
 
@@ -694,7 +871,7 @@ class NodeData {
  * @author Manav
  *
  */
-class Node implements Comparable<Node> {
+class Node implements Comparable<Node>, Serializable {
 	NodeData value;
 	Node left;
 	Node right;

@@ -128,7 +128,7 @@ public class FindOptimalTour {
 		System.out.println("Enter the number of cities");
 		this.noOfCities = scan.nextInt();*/
 		
-		String graph = "tsp_graph_01.txt";
+		String graph = "tsp_graph_02.txt";
 		File file = null;
 		Scanner readGraph = null;
 		try {
@@ -547,7 +547,7 @@ public class FindOptimalTour {
 	 * @param edgeMatrix
 	 * @param s
 	 */
-	private void updateEdgeMatrix(int[][] edgeMatrix, Set<Integer> s) {
+	private boolean updateEdgeMatrix(int[][] edgeMatrix, Set<Integer> s) {
 
 		for (int i = 0; i < this.noOfCities; i++) {
 			// Tracks the total number of edges that should be incident with
@@ -564,6 +564,11 @@ public class FindOptimalTour {
 					remainingEdges++;
 				}
 			}
+			
+			if (edgesConsidered > 2 || (edgesConsidered + remainingEdges) < 2) {
+				return true;
+			}
+			
 			if (edgesConsidered < 2) {
 				if ((remainingEdges == 2 && edgesConsidered == 0) || (remainingEdges == 1 && edgesConsidered == 1)) {
 					for (int j = 0; j < this.noOfCities; j++) {
@@ -584,6 +589,7 @@ public class FindOptimalTour {
 				}
 			}
 		}
+		return false;
 	}
 
 	/**
@@ -693,7 +699,7 @@ public class FindOptimalTour {
 	 */
 	private void displayMatrix(int[][] matrix) {
 		
-		System.out.println("Printing the adjacency matrix representing the graph.\n");
+		System.out.println("Printing the edge matrix representing the graph.\n");
 		
 		printSpaces(this.longestCityName + 2);
 		for (int i = 0; i < this.cities.size(); i++) {
@@ -720,7 +726,8 @@ public class FindOptimalTour {
 		for (int i = 0; i < s; i++) {
 			System.out.print(" ");
 		}
-	}
+	}	
+	
 }
 
 /**
